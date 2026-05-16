@@ -8,19 +8,61 @@ This repository wraps a Polycam capture into a full reconstruction pipeline:
 4. Simplify the mesh.
 5. Transform the final mesh and camera poses back into the original Polycam mesh coordinate system.
 
-The main entry point is:
 
-```bash
-python run_photogrammetry_pipeline.py <object_name>
-```
-
-`<object_name>` must correspond to a folder under `data/`, for example `data/microwave`.
-
-Run the pipeline in an environment that has the required packages for all stages, including OpenCV, PyYAML, Open3D, pycolmap, fast_simplification, MPSfM, and GeoSVR. In the current setup this is typically the `reconstruction` conda environment.
+## Installation
+We recommend using conda to manage the environment.
+1. Create a conda environment
+   ```bash
+   git clone --recursive git@github.com:willipwk/reconstruction_pipeline.git
+   cd reconstruction_pipeline
+   conda create -n reconstruction python=3.11
+   conda activate reconstruction
+   ```
+2. Install pytorch. The pipeline is tested on `torch==2.10.0+cu126`.
+   ```bash
+   pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu126
+   ```
+3. Install mpsfm environment.
+   1. First you need to install the Ceres Solver following [the official instruction](http://ceres-solver.org/installation.html). But the installation is not very easy and I spent quite amount of time compiling and installing it successfully. Therefore, I provide my compiled files [here](https://drive.google.com/drive/folders/1FtMc7RsZCU05SgogZYJYYl6MR0Uq-gU_?usp=sharing). You can directly download it, unzip the file, and place the whole folder under `$HOME/local/` or anywhere you like. 
+   2. Then, let's install pyceres. Currently we use `pyceres==2.5`.
+      ```bash
+      cd mpsfm
+      git clone https://github.com/cvg/pyceres.git
+      cd pyceres
+      git checkout v2.5
+      export CMAKE_PREFIX_PATH=$HOME/local/ceres-solver:$CMAKE_PREFIX_PATH
+      python -m pip install .
+      cd ..
+      ```
+   3. After that, we need to build a customized colmap and pycolmap. You can follow [the official instructions](https://github.com/Zador-Pataki/colmap). But my experience is that building colmap from source is also painful. So I also provide my compiled files [here](https://drive.google.com/drive/folders/1FtMc7RsZCU05SgogZYJYYl6MR0Uq-gU_?usp=sharing). Similar to ceres-solver, place the unzip file under `$HOME/local/` or anywhere you like. Then, let's install pycolmap.
+      ```bash
+      git clone https://github.com/Zador-Pataki/colmap.git
+      cd colmap
+      export CMAKE_PREFIX_PATH=$HOME/local/colmap:$CMAKE_PREFIX_PATH
+      python -m pip install .
+      cd ..
+      ```
+   4. Finally, let's install python packages for mpsfm
+      ```bash
+      pip install -r requirements.txt
+      python -m pip install -e .
+      ```
+4. Install GeoSVR environment.
+    ```bash
+    cd GeoSVR
+    pip install yacs natsort imageio imageio-ffmpeg scikit-image plyfile shapely trimesh open3d gpytoolbox transformers==4.49.0 lpips pytorch-msssim
+    pip install git+https://github.com/rahul-goel/fused-ssim.git@3006269823fc28110ba44686a172cbd59ec01bc3
+    pip install ./cuda
+    cd ..
+    ```
+Rightnow you should be able to run the code.
+   
 
 ## Quick Start
 
-Put a Polycam export under:
+First you need to use Polycam app to scan the object in lidar/space mode. Then, export the raw data from the app.
+
+Put the raw data under `data/<object_name>`. THe file structure should like this
 
 ```text
 data/<object_name>/
@@ -62,252 +104,6 @@ python run_photogrammetry_pipeline.py microwave --force-links
 python run_photogrammetry_pipeline.py microwave --visualize-polycam-alignment
 ```
 
-## Main Pipeline
-
-`run_photogrammetry_pipeline.py` coordinates the full workflow.
-
-For an object named `microwave`, it assumes the raw input lives at:
-
-```text
-data/microwave/
-```
-
-The pipeline stages are:
-
-1. `preprocess_polycam.py`
-   Creates `data/microwave/keyframes_rot` by rotating raw images, depth maps, and camera intrinsics 90 degrees clockwise.
-
-2. MPSfM
-   Creates a symlink:
-
-   ```text
-   mpsfm/data/microwave -> data/microwave/keyframes_rot
-   ```
-
-   Then runs:
-
-   ```bash
-   cd mpsfm
-   python reconstruct.py \
-     --data_dir data/microwave \
-     --images_dir data/microwave/<image_subdir> \
-     --intrinsics_pth data/microwave/intrinsics.yaml \
-     --conf sp-lg_m3dv2
-   ```
-
-   Sparse reconstruction is expected at:
-
-   ```text
-   data/microwave/keyframes_rot/sfm_outputs/rec/
-   ```
-
-3. GeoSVR layout
-   Creates:
-
-   ```text
-   data/microwave/keyframes_rot/sparse/0 -> data/microwave/keyframes_rot/sfm_outputs/rec
-   GeoSVR/data/custom/microwave -> data/microwave/keyframes_rot
-   ```
-
-4. GeoSVR training and mesh extraction
-   Runs from `GeoSVR/`:
-
-   ```bash
-   python train.py --cfg_files <cfg> --source_path data/custom/microwave --model_path <output> --images <image_subdir>
-   python render.py <output>
-   PYTHONPATH=./ python mesh_extract/tsdf_mesh.py <output>
-   ```
-
-5. `mesh_simplification.py`
-   Simplifies:
-
-   ```text
-   <output>/mesh/tsdf/tsdf_fusion_post.ply
-   ```
-
-   into:
-
-   ```text
-   <output>/mesh/tsdf/tsdf_fusion_post_simplified.ply
-   ```
-
-6. `polycam_alignment.py`
-   Aligns the GeoSVR/MPSfM result back to the Polycam mesh coordinate system.
-
-   Default aligned outputs:
-
-   ```text
-   <output>/mesh/tsdf/tsdf_fusion_post_simplified_polycam.ply
-   <output>/mesh/tsdf/camera_pose_polycam.json
-   <output>/mesh/tsdf/mpsfm_to_polycam_alignment.json
-   ```
-
-## Data Format
-
-### Raw Polycam Input
-
-The required raw folder layout is:
-
-```text
-data/<object_name>/
-  keyframes/
-    depth/
-    images/
-    cameras/
-  mesh_info.json
-```
-
-If both of these folders exist, they are used instead of `images/` and `cameras/`:
-
-```text
-data/<object_name>/keyframes/corrected_images/
-data/<object_name>/keyframes/corrected_cameras/
-```
-
-Image filenames and camera JSON filenames must share the same stem:
-
-```text
-keyframes/corrected_images/15467025843.jpg
-keyframes/corrected_cameras/15467025843.json
-```
-
-Supported image extensions:
-
-```text
-.jpg, .jpeg, .png
-```
-
-Supported depth extensions:
-
-```text
-.png, .tif, .tiff, .exr
-```
-
-### Camera JSON
-
-Each camera JSON must contain intrinsics:
-
-```json
-{
-  "width": 1920,
-  "height": 1440,
-  "fx": 1234.0,
-  "fy": 1234.0,
-  "cx": 960.0,
-  "cy": 720.0
-}
-```
-
-For Polycam alignment, each camera JSON must also contain the camera-to-world transform fields:
-
-```json
-{
-  "t_00": 1.0, "t_01": 0.0, "t_02": 0.0, "t_03": 0.0,
-  "t_10": 0.0, "t_11": 1.0, "t_12": 0.0, "t_13": 0.0,
-  "t_20": 0.0, "t_21": 0.0, "t_22": 1.0, "t_23": 0.0
-}
-```
-
-Polycam camera convention is:
-
-```text
-x right, y up, z out of screen
-```
-
-MPSfM/COLMAP camera convention is OpenCV:
-
-```text
-x right, y down, z into screen
-```
-
-Because the pipeline rotates images 90 degrees clockwise before MPSfM, `polycam_alignment.py` aligns against the rotated-image OpenCV camera basis.
-
-### mesh_info.json
-
-`mesh_info.json` is required for final alignment. The pipeline uses:
-
-```json
-{
-  "alignmentTransform": [16 numbers],
-  "bboxCenter": [x, y, z]
-}
-```
-
-`alignmentTransform` is interpreted as a Polycam/SceneKit-style column-major 4x4 transform. `bboxCenter` is optional unless `--correct-mesh-center` is used.
-
-## Generated Data
-
-After preprocessing:
-
-```text
-data/<object_name>/keyframes_rot/
-  corrected_images/ or images/
-  corrected_cameras/ or cameras/
-  depth/
-  intrinsics.yaml
-  rotation_preprocess.yaml
-```
-
-`intrinsics.yaml` is generated for MPSfM. It stores each frame's `fx`, `fy`, `cx`, and `cy`, grouped by MPSfM camera index.
-
-After MPSfM:
-
-```text
-data/<object_name>/keyframes_rot/sfm_outputs/rec/
-  cameras.bin
-  images.bin
-  points3D.bin
-```
-
-Text COLMAP files are also accepted:
-
-```text
-cameras.txt
-images.txt
-points3D.txt
-```
-
-After GeoSVR:
-
-```text
-GeoSVR/output/custom/<object_name>/
-  mesh/tsdf/tsdf_fusion_post.ply
-  mesh/tsdf/tsdf_fusion_post_simplified.ply
-  mesh/tsdf/tsdf_fusion_post_simplified_polycam.ply
-  mesh/tsdf/camera_pose_polycam.json
-  mesh/tsdf/mpsfm_to_polycam_alignment.json
-```
-
-## Idempotency and Reruns
-
-The pipeline is designed to avoid repeating expensive work when outputs already exist.
-
-`preprocess_polycam.py` skips rotation if all required rotated files already exist. If only some files are missing, it creates the missing files and keeps existing files.
-
-MPSfM is skipped when a complete sparse reconstruction already exists under:
-
-```text
-data/<object_name>/keyframes_rot/sfm_outputs/rec/
-```
-
-Use these flags to force reruns:
-
-```bash
---force-preprocess   # rotate raw data again
---force-sfm          # run MPSfM again
---force-links        # replace existing symlinks
-```
-
-Use these flags to skip stages manually:
-
-```bash
---skip-preprocess
---skip-sfm
---skip-geosvr
---no-simplify-mesh
---no-transform-to-polycam
-```
-
 ## Command-Line Options
 
 Important options for `run_photogrammetry_pipeline.py`:
@@ -315,10 +111,9 @@ Important options for `run_photogrammetry_pipeline.py`:
 ```text
 --cfg-path                     GeoSVR config path. Relative paths are resolved from GeoSVR/.
 --output-path                  GeoSVR output path. Defaults to GeoSVR/output/custom/<object>.
---mpsfm-conf                   MPSfM config name. Defaults to sp-lg_m3dv2.
+--mpsfm-conf                   MPSfM config name. Defaults to sp-lg_mogev2.
 --simplification-target-reduction
-                               Fraction of mesh triangles to remove. Defaults to 0.9.
---correct-mesh-center          Translate final mesh bbox center to mesh_info.json bboxCenter.
+                               Fraction of mesh triangles to remove. Defaults to 0.5.
 --visualize-polycam-alignment  Open an Open3D alignment view.
 --polycam-mesh-path            Optional raw Polycam mesh overlay for visualization.
 --camera-scale                 Camera frustum size for visualization.
@@ -341,30 +136,6 @@ python run_photogrammetry_pipeline.py microwave \
   --geosvr-arg some_value
 ```
 
-## Alignment Visualization
-
-To inspect alignment after a run:
-
-```bash
-python polycam_alignment.py \
-  --visualize-only \
-  --output-mesh-path GeoSVR/output/custom/microwave/mesh/tsdf/tsdf_fusion_post_simplified_polycam.ply \
-  --output-camera-path GeoSVR/output/custom/microwave/mesh/tsdf/camera_pose_polycam.json \
-  --polycam-camera-dir data/microwave/keyframes/corrected_cameras \
-  --mesh-info-path data/microwave/mesh_info.json
-```
-
-Visualization colors:
-
-```text
-gray mesh     transformed GeoSVR mesh
-green cameras transformed MPSfM cameras
-red cameras   raw Polycam cameras after mesh_info transform
-orange cameras raw Polycam cameras before mesh_info transform
-yellow lines  matched camera-center offsets
-blue mesh     optional raw Polycam mesh from --polycam-mesh-path
-```
-
 ## Module Summary
 
 `preprocess_polycam.py`
@@ -383,10 +154,6 @@ Simplifies a triangle mesh using `fast_simplification` and Open3D.
 
 Reads MPSfM/COLMAP camera poses, raw Polycam camera poses, and `mesh_info.json`. It estimates a similarity transform from MPSfM coordinates into the Polycam mesh coordinate system, writes an aligned mesh, writes transformed camera poses, and can visualize the result in Open3D.
 
-`refine_depth.py`
-
-Contains the lingbot-depth depth refinement workflow. It is separate from the main photogrammetry pipeline unless called independently.
-
 ## Practical Notes
 
 Run commands from the repository root unless noted otherwise.
@@ -400,3 +167,6 @@ The final aligned mesh is usually the mesh to use outside this pipeline:
 ```text
 GeoSVR/output/custom/<object_name>/mesh/tsdf/tsdf_fusion_post_simplified_polycam.ply
 ```
+
+## Acknowledgments
+This project is built on [mpsfm](https://github.com/cvg/mpsfm) and [GeoSVR](https://github.com/Fictionarry/GeoSVR). We thank the authors of these two paper for open sourcing their amazing project. 

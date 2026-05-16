@@ -119,7 +119,6 @@ def run_pipeline(
     simplify_mesh=True,
     simplification_target_reduction=0.9,
     transform_to_polycam=True,
-    correct_mesh_center=False,
     visualize_alignment=False,
     polycam_mesh_path=None,
     camera_scale=0.05,
@@ -286,7 +285,6 @@ def run_pipeline(
             output_mesh_path=transformed_mesh_path,
             output_camera_path=transformed_camera_path,
             output_alignment_path=alignment_path,
-            correct_mesh_center=correct_mesh_center,
         )
 
         if visualize_alignment:
@@ -326,7 +324,7 @@ def main():
         default=None,
         help="GeoSVR model output path. Defaults to GeoSVR/output/custom/{object}.",
     )
-    parser.add_argument("--mpsfm-conf", default="sp-lg_m3dv2", help="MPSfM config name.")
+    parser.add_argument("--mpsfm-conf", default="sp-lg_mogev2", help="MPSfM config name.")
     parser.add_argument("--force-preprocess", action="store_true", help="Reprocess existing rotated Polycam outputs.")
     parser.add_argument("--force-sfm", action="store_true", help="Re-run MPSfM even when sparse reconstruction exists.")
     parser.add_argument("--force-links", action="store_true", help="Replace existing symlinks.")
@@ -338,11 +336,6 @@ def main():
         "--no-transform-to-polycam",
         action="store_true",
         help="Skip transforming the final mesh and camera poses back to Polycam mesh coordinates.",
-    )
-    parser.add_argument(
-        "--correct-mesh-center",
-        action="store_true",
-        help="Apply the optional mesh-center correction from polycam_alignment.py.",
     )
     parser.add_argument(
         "--visualize-polycam-alignment",
@@ -398,7 +391,6 @@ def main():
         simplify_mesh=not args.no_simplify_mesh,
         simplification_target_reduction=args.simplification_target_reduction,
         transform_to_polycam=not args.no_transform_to_polycam,
-        correct_mesh_center=args.correct_mesh_center,
         visualize_alignment=args.visualize_polycam_alignment,
         polycam_mesh_path=args.polycam_mesh_path,
         camera_scale=args.camera_scale,

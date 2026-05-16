@@ -103,17 +103,6 @@ def _load_mesh_info_transform(mesh_info_path):
     return transform
 
 
-def _mesh_bbox_center(mesh_path, transform=None):
-    mesh = o3d.io.read_triangle_mesh(str(mesh_path))
-    if mesh.is_empty():
-        raise ValueError(f"Input mesh is empty or unreadable: {mesh_path}")
-
-    vertices = np.asarray(mesh.vertices)
-    if transform is not None:
-        vertices = _apply_transform(vertices, transform)
-    return 0.5 * (vertices.min(axis=0) + vertices.max(axis=0))
-
-
 def _similarity_umeyama(source, target):
     source = np.asarray(source, dtype=np.float64)
     target = np.asarray(target, dtype=np.float64)
@@ -470,11 +459,10 @@ def align_mesh_and_cameras_to_polycam(
     output_mesh_path,
     output_camera_path,
     output_alignment_path,
-    correct_mesh_center=False,
 ):
     colmap_camera_to_world, colmap_centers = _read_colmap_camera_poses(reconstruction_dir)
     polycam_cameras = _files_by_stem(polycam_camera_dir, ".json")
-    mesh_from_polycam_world, mesh_info_bbox_center = _load_mesh_info(mesh_info_path)
+    mesh_from_polycam_world, _ = _load_mesh_info(mesh_info_path)
 
     frame_ids = sorted(set(colmap_centers) & set(polycam_cameras))
     if len(frame_ids) < 3:
@@ -537,16 +525,7 @@ def align_mesh_and_cameras_to_polycam(
         for frame_id, pose in polycam_rotated_opencv_camera_to_mesh.items()
     }
 
-    mesh_center_correction = np.zeros(3, dtype=np.float64)
-    mesh_center_before_correction = _mesh_bbox_center(input_mesh_path, mesh_from_mpsfm)
-    if correct_mesh_center and mesh_info_bbox_center is not None:
-        mesh_center_correction = mesh_info_bbox_center - mesh_center_before_correction
-        center_correction_transform = np.eye(4, dtype=np.float64)
-        center_correction_transform[:3, 3] = mesh_center_correction
-        mesh_from_mpsfm = center_correction_transform @ mesh_from_mpsfm
-
     _write_transformed_mesh(input_mesh_path, output_mesh_path, mesh_from_mpsfm)
-    mesh_center_after_correction = _mesh_bbox_center(output_mesh_path)
 
     camera_records = {}
     linear = mesh_from_mpsfm[:3, :3]
@@ -616,11 +595,6 @@ def align_mesh_and_cameras_to_polycam(
                 "original_opencv_from_rotated_cw_opencv": ORIGINAL_OPENCV_FROM_ROTATED_CW_OPENCV.tolist(),
                 "polycam_from_rotated_cw_opencv_camera": POLYCAM_FROM_ROTATED_CW_OPENCV_CAMERA.tolist(),
                 "polycam_mesh_from_aligned": POLYCAM_MESH_FROM_ALIGNED.tolist(),
-                "mesh_info_bbox_center": None if mesh_info_bbox_center is None else mesh_info_bbox_center.tolist(),
-                "mesh_center_before_correction": mesh_center_before_correction.tolist(),
-                "mesh_center_after_correction": mesh_center_after_correction.tolist(),
-                "mesh_center_correction": mesh_center_correction.tolist(),
-                "correct_mesh_center": correct_mesh_center,
                 "scale": scale,
                 "rotation": rotation.tolist(),
                 "translation": translation.tolist(),
@@ -656,11 +630,6 @@ def main():
     parser.add_argument("--output-mesh-path")
     parser.add_argument("--output-camera-path")
     parser.add_argument("--output-alignment-path")
-    parser.add_argument(
-        "--correct-mesh-center",
-        action="store_true",
-        help="Translate the final mesh bbox center to mesh_info.json bboxCenter after pose alignment.",
-    )
     parser.add_argument(
         "--visualize",
         action="store_true",
@@ -734,7 +703,6 @@ def main():
         output_mesh_path=args.output_mesh_path,
         output_camera_path=args.output_camera_path,
         output_alignment_path=args.output_alignment_path,
-        correct_mesh_center=args.correct_mesh_center,
     )
     for key, value in result.items():
         print(f"{key}: {value}")
