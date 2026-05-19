@@ -23,26 +23,71 @@ We recommend using conda to manage the environment.
    pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu126
    ```
 3. Install mpsfm environment.
-   1. First you need to install the Ceres Solver following [the official instruction](http://ceres-solver.org/installation.html). But the installation is not very easy and I spent quite amount of time compiling and installing it successfully. Therefore, I provide my compiled files [here](https://drive.google.com/drive/folders/1FtMc7RsZCU05SgogZYJYYl6MR0Uq-gU_?usp=sharing). You can directly download it, unzip the file, and place the whole folder under `$HOME/local/` or anywhere you like. 
-   2. Then, let's install pyceres. Currently we use `pyceres==2.5`.
+   1. Whether you have sudo or not, I recommend to install cpp libraries using conda. Then add paths to these libraries to `CMAKE_PREFIX`
+      ```bash
+      conda install -c conda-forge glog metis suitesparse eigen==3.4.0 boost-cpp flann cgal gmp mpfr qt freeimage glew
+      export CMAKE_PREFIX_PATH="$CONDA_PREFIX:$CMAKE_PREFIX_PATH"
+      export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+      ```
+   2. Now let's install pyceres. First you need to install the Ceres Solver following [the official instruction](http://ceres-solver.org/installation.html). I make some modifications to the installation scripts as I do not have sudo.
       ```bash
       cd mpsfm
       git clone https://github.com/cvg/pyceres.git
       cd pyceres
       git checkout v2.5
+
+      wget http://ceres-solver.org/ceres-solver-2.2.0.tar.gz
+      tar zxvf ceres-solver-2.2.0.tar.gz
+      cd ceres-solver-2.2.0
+      cmake -S . -B build -G Ninja \
+         -DCMAKE_INSTALL_PREFIX=$HOME/local/ceres-solver \
+         -DCMAKE_PREFIX_PATH=$CONDA_PREFIX \
+         -DBLA_VENDOR=OpenBLAS \
+         -DBLAS_LIBRARIES=$CONDA_PREFIX/lib/libopenblas.so \
+         -DLAPACK_LIBRARIES=$CONDA_PREFIX/lib/libopenblas.so \
+         -DSuiteSparse_DIR=$CONDA_PREFIX/lib/cmake/SuiteSparse \
+         -DBUILD_TESTING=OFF \
+         -DBUILD_EXAMPLES=OFF
+      cmake --build build
+      cmake --install build
+
+      cd ..
+      ```
+   3. Then, let's install pyceres. Currently we use `pyceres==2.5`.
+      ```bash
       export CMAKE_PREFIX_PATH=$HOME/local/ceres-solver:$CMAKE_PREFIX_PATH
       python -m pip install .
       cd ..
       ```
-   3. After that, we need to build a customized colmap and pycolmap. You can follow [the official instructions](https://github.com/Zador-Pataki/colmap). But my experience is that building colmap from source is also painful. So I also provide my compiled files [here](https://drive.google.com/drive/folders/1FtMc7RsZCU05SgogZYJYYl6MR0Uq-gU_?usp=sharing). Similar to ceres-solver, place the unzip file under `$HOME/local/` or anywhere you like. Then, let's install pycolmap.
+      If you see an error message like this: "Failed to find SuiteSparse - Did not find BLAS library", you can add paths manually in the `pyproject.toml` file like this BEFORE the `[project]` line:
+      ```toml
+      [tool.scikit-build.cmake]
+      args=["-DBLAS_LIBRARIES=/usr/lib/x86_64-linux-gnu/blas/libblas.so", "-DLAPACK_LIBRARIES=/usr/lib/x86_64-linux-gnu/lapack/liblapack.so"]
+      ```
+      Replace the paths to your BLAS and Lapack library files.
+   4. After that, we need to build a customized colmap and pycolmap. You can follow [the official instructions](https://github.com/Zador-Pataki/colmap).
       ```bash
       git clone https://github.com/Zador-Pataki/colmap.git
       cd colmap
+
+      mkdir build
+      cd build
+      cmake .. -GNinja \
+         -DCMAKE_BUILD_TYPE=Release \
+         -DCMAKE_INSTALL_PREFIX=$HOME/local/colmap \
+         -DCMAKE_PREFIX_PATH="$CONDA_PREFIX" \
+         -DCMAKE_BUILD_RPATH="$CONDA_PREFIX/lib" \
+         -DCMAKE_INSTALL_RPATH="$CONDA_PREFIX/lib" \
+         -DGlog_DIR="$CONDA_PREFIX/lib/cmake/glog" \
+         -DGflags_DIR="$CONDA_PREFIX/lib/cmake/gflags"
+      ninja
+      ninja install
+
       export CMAKE_PREFIX_PATH=$HOME/local/colmap:$CMAKE_PREFIX_PATH
       python -m pip install .
       cd ..
       ```
-   4. Finally, let's install python packages for mpsfm
+   5. Finally, let's install python packages for mpsfm
       ```bash
       pip install -r requirements.txt
       python -m pip install -e .
@@ -51,8 +96,8 @@ We recommend using conda to manage the environment.
     ```bash
     cd GeoSVR
     pip install yacs natsort imageio imageio-ffmpeg scikit-image plyfile shapely trimesh open3d gpytoolbox transformers==4.49.0 lpips pytorch-msssim
-    pip install git+https://github.com/rahul-goel/fused-ssim.git@3006269823fc28110ba44686a172cbd59ec01bc3
-    pip install ./cuda
+    pip install --no-build-isolation git+https://github.com/rahul-goel/fused-ssim.git@3006269823fc28110ba44686a172cbd59ec01bc3
+    pip install --no-build-isolation ./cuda
     cd ..
     ```
 Rightnow you should be able to run the code.
