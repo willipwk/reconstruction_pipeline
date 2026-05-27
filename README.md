@@ -189,7 +189,7 @@ To reconstruct every object folder under `data/`, run:
 python run_all_photogrammetry_pipelines.py --gpus 0,1,2,3
 ```
 
-The launcher assigns one GPU to one object at a time by setting `CUDA_VISIBLE_DEVICES` for each subprocess. It writes per-object logs under `logs/photogrammetry/`.
+The launcher uses `ThreadPoolExecutor` and assigns one GPU to one object at a time by setting `CUDA_VISIBLE_DEVICES` for each subprocess. When `GPUtil` is available, it also checks GPU load and memory before starting a job on a reserved GPU. It writes per-object logs under `logs/photogrammetry/`.
 
 Useful variants:
 
@@ -202,6 +202,12 @@ python run_all_photogrammetry_pipelines.py --gpus 0,1 --objects microwave lamp
 
 # Forward arguments to run_photogrammetry_pipeline.py after '--'.
 python run_all_photogrammetry_pipelines.py --gpus 0,1 -- --skip-sfm
+
+# Wait for external GPU usage to drop before launching each job.
+python run_all_photogrammetry_pipelines.py --gpus 0,1 --max-gpu-load 0.5 --max-gpu-memory 0.5
+
+# Disable GPUtil checks and only use exclusive scheduler slots.
+python run_all_photogrammetry_pipelines.py --gpus 0,1 --no-gputil
 ```
 
 ## Module Summary
