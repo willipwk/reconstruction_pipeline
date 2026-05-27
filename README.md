@@ -181,6 +181,29 @@ python run_photogrammetry_pipeline.py microwave \
   --geosvr-arg some_value
 ```
 
+## Batch Reconstruction
+
+To reconstruct every object folder under `data/`, run:
+
+```bash
+python run_all_photogrammetry_pipelines.py --gpus 0,1,2,3
+```
+
+The launcher assigns one GPU to one object at a time by setting `CUDA_VISIBLE_DEVICES` for each subprocess. It writes per-object logs under `logs/photogrammetry/`.
+
+Useful variants:
+
+```bash
+# Preview the schedule without running anything.
+python run_all_photogrammetry_pipelines.py --gpus 0,1 --dry-run
+
+# Process a subset of objects.
+python run_all_photogrammetry_pipelines.py --gpus 0,1 --objects microwave lamp
+
+# Forward arguments to run_photogrammetry_pipeline.py after '--'.
+python run_all_photogrammetry_pipelines.py --gpus 0,1 -- --skip-sfm
+```
+
 ## Module Summary
 
 `preprocess_polycam.py`
