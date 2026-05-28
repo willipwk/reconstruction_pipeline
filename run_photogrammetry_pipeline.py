@@ -94,10 +94,28 @@ def _mpsfm_reconstruction_exists(reconstruction_dir):
     return all(path.exists() for path in binary_files) or all(path.exists() for path in text_files)
 
 
-def _ensure_geosvr_sparse_layout(keyframes_dir, force=False):
-    sfm_rec = keyframes_dir / "sfm_outputs" / "rec"
-    if not _mpsfm_reconstruction_exists(sfm_rec):
-        raise FileNotFoundError(f"Expected MPSfM reconstruction not found: {sfm_rec}")
+def _find_mpsfm_reconstruction_dir(keyframes_dir):
+    sfm_outputs = Path(keyframes_dir) / "sfm_outputs"
+    if not sfm_outputs.exists():
+        return None
+
+    candidates = [sfm_outputs / "rec", sfm_outputs]
+    candidates.extend(path for path in sorted(sfm_outputs.iterdir()) if path.is_dir())
+    seen = set()
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if _mpsfm_reconstruction_exists(candidate):
+            return candidate
+    return None
+
+
+def _ensure_geosvr_sparse_layout(keyframes_dir, reconstruction_dir=None, force=False):
+    sfm_rec = reconstruction_dir or _find_mpsfm_reconstruction_dir(keyframes_dir)
+    if sfm_rec is None:
+        raise FileNotFoundError(f"Expected MPSfM reconstruction under: {Path(keyframes_dir) / 'sfm_outputs'}")
 
     sparse_dir = keyframes_dir / "sparse"
     sparse_zero = sparse_dir / "0"
@@ -177,10 +195,10 @@ def run_pipeline(
     _safe_symlink(rotated_keyframes, mpsfm_link, force=force_links)
 
     image_subdir = image_dir.name
+    mpsfm_reconstruction_dir = _find_mpsfm_reconstruction_dir(rotated_keyframes)
     if not skip_sfm:
-        sfm_rec = rotated_keyframes / "sfm_outputs" / "rec"
-        if _mpsfm_reconstruction_exists(sfm_rec) and not force_sfm:
-            print(f"[run] MPSfM sparse reconstruction already exists at {sfm_rec}; skipping.")
+        if mpsfm_reconstruction_dir is not None and not force_sfm:
+            print(f"[run] MPSfM sparse reconstruction already exists at {mpsfm_reconstruction_dir}; skipping.")
         else:
             _run(
                 [
@@ -197,10 +215,13 @@ def run_pipeline(
                 ],
                 cwd=mpsfm_dir,
             )
-        if cleanup_mpsfm_cache and _mpsfm_reconstruction_exists(sfm_rec):
+            mpsfm_reconstruction_dir = _find_mpsfm_reconstruction_dir(rotated_keyframes)
+        if cleanup_mpsfm_cache and mpsfm_reconstruction_dir is not None:
             _cleanup_mpsfm_cache(rotated_keyframes)
+    elif mpsfm_reconstruction_dir is None:
+        raise FileNotFoundError(f"Expected MPSfM reconstruction under: {rotated_keyframes / 'sfm_outputs'}")
 
-    _ensure_geosvr_sparse_layout(rotated_keyframes, force=force_links)
+    _ensure_geosvr_sparse_layout(rotated_keyframes, reconstruction_dir=mpsfm_reconstruction_dir, force=force_links)
 
     geosvr_link = geosvr_dir / "data" / "custom" / object_name
     _safe_symlink(rotated_keyframes, geosvr_link, force=force_links)
@@ -302,7 +323,7 @@ def run_pipeline(
         from polycam_alignment import align_mesh_and_cameras_to_polycam
 
         polycam_alignment = align_mesh_and_cameras_to_polycam(
-            reconstruction_dir=rotated_keyframes / "sfm_outputs" / "rec",
+            reconstruction_dir=mpsfm_reconstruction_dir,
             polycam_camera_dir=original_camera_dir,
             mesh_info_path=mesh_info_path,
             input_mesh_path=mesh_for_alignment,

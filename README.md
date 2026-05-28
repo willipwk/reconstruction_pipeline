@@ -132,6 +132,8 @@ GeoSVR/output/custom/<object_name>/
 
 If `GeoSVR/output/custom/<object_name>/mesh/tsdf/tsdf_fusion_post.ply` already exists, the pipeline skips GeoSVR training/rendering/TSDF extraction and continues with mesh simplification and Polycam alignment.
 
+Similarly, MPSfM is skipped when `data/<object_name>/keyframes_rot/sfm_outputs/` already contains a valid COLMAP reconstruction, either directly in `sfm_outputs/` or in a child directory such as `sfm_outputs/rec/`.
+
 Useful variants:
 
 ```bash
