@@ -34,6 +34,28 @@ def _split_csv(value):
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _in_slurm_allocation():
+    return any(
+        os.environ.get(name)
+        for name in (
+            "SLURM_JOB_ID",
+            "SLURM_JOBID",
+            "SLURM_STEP_ID",
+            "SLURM_PROCID",
+            "SLURM_GPUS",
+            "SLURM_JOB_GPUS",
+        )
+    )
+
+
+def _use_gputil_checks(args):
+    if args.no_gputil:
+        return False
+    if args.force_gputil_check:
+        return True
+    return not _in_slurm_allocation()
+
+
 def _detect_gpus_with_gputil():
     if GPUtil is None:
         return None
@@ -182,8 +204,8 @@ def _get_gputil_gpu(gpu_id):
 
 
 def _gpu_is_available(gpu_id, args):
-    if args.no_gputil:
-        return True, "GPUtil disabled"
+    if not _use_gputil_checks(args):
+        return True, "GPUtil checks disabled"
     if GPUtil is None:
         if args.require_gputil:
             raise RuntimeError("GPUtil is required but is not installed.")
@@ -202,7 +224,7 @@ def _gpu_is_available(gpu_id, args):
 
 
 def _wait_until_gpu_available(gpu_id, args, stop_event):
-    if args.no_gputil:
+    if not _use_gputil_checks(args):
         return
 
     last_message_at = 0.0
@@ -316,6 +338,11 @@ def run_batch(args):
 
     _print(f"Selected objects ({len(objects)}): {', '.join(objects)}")
     _print(f"GPU slots ({len(gpus)}): {', '.join(gpus)}")
+    _print(f"Worker count: {min(len(objects), len(gpus))}")
+    if _in_slurm_allocation():
+        _print("Slurm allocation detected.")
+    if _in_slurm_allocation() and not args.force_gputil_check and not args.no_gputil:
+        _print("GPUtil load/memory waiting is disabled under Slurm; use --force-gputil-check to enable it.")
     if GPUtil is None and not args.no_gputil:
         _print("GPUtil is not installed; using exclusive GPU slots without load/memory availability checks.")
     if pipeline_args:
@@ -430,6 +457,11 @@ def main():
         "--no-gputil",
         action="store_true",
         help="Disable GPUtil load/memory checks and use only exclusive GPU slots.",
+    )
+    parser.add_argument(
+        "--force-gputil-check",
+        action="store_true",
+        help="Use GPUtil load/memory waiting even inside a Slurm allocation.",
     )
     parser.add_argument(
         "--require-gputil",

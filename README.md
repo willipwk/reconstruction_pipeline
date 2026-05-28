@@ -130,6 +130,8 @@ By default this writes GeoSVR outputs to:
 GeoSVR/output/custom/<object_name>/
 ```
 
+If `GeoSVR/output/custom/<object_name>/mesh/tsdf/tsdf_fusion_post.ply` already exists, the pipeline skips GeoSVR training/rendering/TSDF extraction and continues with mesh simplification and Polycam alignment.
+
 Useful variants:
 
 ```bash
@@ -138,6 +140,9 @@ python run_photogrammetry_pipeline.py microwave --skip-geosvr
 
 # Re-run MPSfM even if sparse reconstruction files already exist.
 python run_photogrammetry_pipeline.py microwave --force-sfm
+
+# Keep the MPSfM monocular-prior cache for debugging.
+python run_photogrammetry_pipeline.py microwave --keep-mpsfm-cache
 
 # Re-run image/depth/camera rotation even if rotated outputs already exist.
 python run_photogrammetry_pipeline.py microwave --force-preprocess
@@ -157,6 +162,7 @@ Important options for `run_photogrammetry_pipeline.py`:
 --cfg-path                     GeoSVR config path. Relative paths are resolved from GeoSVR/.
 --output-path                  GeoSVR output path. Defaults to GeoSVR/output/custom/<object>.
 --mpsfm-conf                   MPSfM config name. Defaults to sp-lg_mogev2.
+--keep-mpsfm-cache             Keep data/<object>/keyframes_rot/cache_dir after MPSfM finishes.
 --simplification-target-reduction
                                Fraction of mesh triangles to remove. Defaults to 0.5.
 --visualize-polycam-alignment  Open an Open3D alignment view.
@@ -189,7 +195,7 @@ To reconstruct every object folder under `data/`, run:
 python run_all_photogrammetry_pipelines.py --gpus 0,1,2,3
 ```
 
-The launcher uses `ThreadPoolExecutor` and assigns one GPU to one object at a time by setting `CUDA_VISIBLE_DEVICES` for each subprocess. When `GPUtil` is available, it also checks GPU load and memory before starting a job on a reserved GPU. It writes per-object logs under `logs/photogrammetry/`.
+The launcher uses `ThreadPoolExecutor` and assigns one GPU to one object at a time by setting `CUDA_VISIBLE_DEVICES` for each subprocess. When `GPUtil` is available, it checks GPU load and memory before starting a job on a reserved GPU. Inside a Slurm allocation this GPUtil waiting is disabled by default because Slurm already controls the GPU allocation and GPUtil can report global load in a misleading way. It writes per-object logs under `logs/photogrammetry/`.
 
 Useful variants:
 
@@ -208,6 +214,9 @@ python run_all_photogrammetry_pipelines.py --gpus 0,1 --max-gpu-load 0.5 --max-g
 
 # Disable GPUtil checks and only use exclusive scheduler slots.
 python run_all_photogrammetry_pipelines.py --gpus 0,1 --no-gputil
+
+# Force GPUtil load/memory checks even inside Slurm.
+python run_all_photogrammetry_pipelines.py --gpus 0,1 --force-gputil-check
 ```
 
 ## Module Summary

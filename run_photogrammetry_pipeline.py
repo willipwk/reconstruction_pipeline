@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -104,6 +105,22 @@ def _ensure_geosvr_sparse_layout(keyframes_dir, force=False):
     return sparse_zero
 
 
+def _cleanup_mpsfm_cache(keyframes_dir):
+    cache_dir = Path(keyframes_dir) / "cache_dir"
+    if not cache_dir.exists() and not cache_dir.is_symlink():
+        return None
+
+    if cache_dir.name != "cache_dir" or cache_dir.parent.resolve() != Path(keyframes_dir).resolve():
+        raise ValueError(f"Refusing to delete unexpected cache path: {cache_dir}")
+
+    print(f"[run] delete MPSfM cache: {cache_dir}")
+    if cache_dir.is_symlink():
+        cache_dir.unlink()
+    else:
+        shutil.rmtree(cache_dir)
+    return cache_dir
+
+
 def run_pipeline(
     object_name,
     *,
@@ -113,6 +130,7 @@ def run_pipeline(
     force_preprocess=False,
     force_sfm=False,
     force_links=False,
+    cleanup_mpsfm_cache=True,
     skip_preprocess=False,
     skip_sfm=False,
     skip_geosvr=False,
@@ -179,11 +197,19 @@ def run_pipeline(
                 ],
                 cwd=mpsfm_dir,
             )
+        if cleanup_mpsfm_cache and _mpsfm_reconstruction_exists(sfm_rec):
+            _cleanup_mpsfm_cache(rotated_keyframes)
 
     _ensure_geosvr_sparse_layout(rotated_keyframes, force=force_links)
 
     geosvr_link = geosvr_dir / "data" / "custom" / object_name
     _safe_symlink(rotated_keyframes, geosvr_link, force=force_links)
+
+    output_path = Path(output_path)
+    if not output_path.is_absolute():
+        output_path = root / output_path
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    geosvr_mesh_path = output_path / "mesh" / "tsdf" / "tsdf_fusion_post.ply"
 
     if skip_geosvr:
         return {
@@ -197,46 +223,44 @@ def run_pipeline(
     if not cfg_path.is_absolute():
         cfg_path = geosvr_dir / cfg_path
 
-    output_path = Path(output_path)
-    if not output_path.is_absolute():
-        output_path = root / output_path
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
     data_path = Path("data") / "custom" / object_name
     extra_args = geosvr_extra_args or []
 
-    _run(
-        [
-            "python",
-            "train.py",
-            "--cfg_files",
-            str(cfg_path),
-            "--source_path",
-            str(data_path),
-            "--model_path",
-            str(output_path),
-            "--images",
-            image_subdir,
-            *extra_args,
-        ],
-        cwd=geosvr_dir,
-    )
-    _run(["python", "render.py", str(output_path)], cwd=geosvr_dir)
-    env = os.environ.copy()
-    env["PYTHONPATH"] = "./" if not env.get("PYTHONPATH") else f"./:{env['PYTHONPATH']}"
-    print(f"[run] cwd={geosvr_dir}")
-    print(f"[run] PYTHONPATH={env['PYTHONPATH']} python mesh_extract/tsdf_mesh.py {output_path}")
-    subprocess.run(
-        ["python", "mesh_extract/tsdf_mesh.py", "--voxel_size", "0.005", str(output_path)],
-        cwd=geosvr_dir,
-        check=True,
-        env=env,
-    )
+    if geosvr_mesh_path.exists():
+        print(f"[run] GeoSVR mesh already exists at {geosvr_mesh_path}; skipping GeoSVR reconstruction.")
+    else:
+        _run(
+            [
+                "python",
+                "train.py",
+                "--cfg_files",
+                str(cfg_path),
+                "--source_path",
+                str(data_path),
+                "--model_path",
+                str(output_path),
+                "--images",
+                image_subdir,
+                *extra_args,
+            ],
+            cwd=geosvr_dir,
+        )
+        _run(["python", "render.py", str(output_path)], cwd=geosvr_dir)
+        env = os.environ.copy()
+        env["PYTHONPATH"] = "./" if not env.get("PYTHONPATH") else f"./:{env['PYTHONPATH']}"
+        print(f"[run] cwd={geosvr_dir}")
+        print(f"[run] PYTHONPATH={env['PYTHONPATH']} python mesh_extract/tsdf_mesh.py {output_path}")
+        subprocess.run(
+            ["python", "mesh_extract/tsdf_mesh.py", "--voxel_size", "0.005", str(output_path)],
+            cwd=geosvr_dir,
+            check=True,
+            env=env,
+        )
 
     simplified_mesh_path = None
     polycam_alignment = None
     if simplify_mesh:
-        mesh_path = output_path / "mesh" / "tsdf" / "tsdf_fusion_post.ply"
+        mesh_path = geosvr_mesh_path
         simplified_mesh_path = output_path / "mesh" / "tsdf" / "tsdf_fusion_post_simplified.ply"
         if not mesh_path.exists():
             raise FileNotFoundError(f"Expected GeoSVR mesh not found: {mesh_path}")
@@ -328,6 +352,11 @@ def main():
     parser.add_argument("--force-preprocess", action="store_true", help="Reprocess existing rotated Polycam outputs.")
     parser.add_argument("--force-sfm", action="store_true", help="Re-run MPSfM even when sparse reconstruction exists.")
     parser.add_argument("--force-links", action="store_true", help="Replace existing symlinks.")
+    parser.add_argument(
+        "--keep-mpsfm-cache",
+        action="store_true",
+        help="Keep keyframes_rot/cache_dir after MPSfM finishes.",
+    )
     parser.add_argument("--skip-preprocess", action="store_true", help="Use existing data/{object}/keyframes_rot.")
     parser.add_argument("--skip-sfm", action="store_true", help="Use existing keyframes_rot/sfm_outputs/rec.")
     parser.add_argument("--skip-geosvr", action="store_true", help="Stop after preparing GeoSVR data/sparse layout.")
@@ -385,6 +414,7 @@ def main():
         force_preprocess=args.force_preprocess,
         force_sfm=args.force_sfm,
         force_links=args.force_links,
+        cleanup_mpsfm_cache=not args.keep_mpsfm_cache,
         skip_preprocess=args.skip_preprocess,
         skip_sfm=args.skip_sfm,
         skip_geosvr=args.skip_geosvr,
