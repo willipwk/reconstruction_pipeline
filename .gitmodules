@@ -1,7 +1,7 @@
 [submodule "GeoSVR"]
-	path = GeoSVR
+	path = third_party/GeoSVR
 	url = git@github.com:willipwk/GeoSVR.git
 [submodule "mpsfm"]
-	path = mpsfm
+	path = third_party/mpsfm
 	url = git@github.com:willipwk/mpsfm.git
 	branch = zador/mogev2

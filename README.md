@@ -31,7 +31,7 @@ We recommend using conda to manage the environment.
       ```
    2. Now let's install pyceres. First you need to install the Ceres Solver following [the official instruction](http://ceres-solver.org/installation.html). I make some modifications to the installation scripts as I do not have sudo.
       ```bash
-      cd mpsfm
+      cd third_party/mpsfm
       git clone https://github.com/cvg/pyceres.git
       cd pyceres
       git checkout v2.5
@@ -91,14 +91,15 @@ We recommend using conda to manage the environment.
       ```bash
       pip install -r requirements.txt
       python -m pip install -e .
+      cd ../..
       ```
 4. Install GeoSVR environment.
     ```bash
-    cd GeoSVR
+    cd third_party/GeoSVR
     pip install yacs natsort imageio imageio-ffmpeg scikit-image plyfile shapely trimesh open3d gpytoolbox transformers==4.49.0 lpips pytorch-msssim
     pip install --no-build-isolation git+https://github.com/rahul-goel/fused-ssim.git@3006269823fc28110ba44686a172cbd59ec01bc3
     pip install --no-build-isolation ./cuda
-    cd ..
+    cd ../..
     ```
 Rightnow you should be able to run the code.
    
@@ -127,10 +128,10 @@ python run_photogrammetry_pipeline.py microwave
 By default this writes GeoSVR outputs to:
 
 ```text
-GeoSVR/output/custom/<object_name>/
+third_party/GeoSVR/output/custom/<object_name>/
 ```
 
-If `GeoSVR/output/custom/<object_name>/mesh/tsdf/tsdf_fusion_post.ply` already exists, the pipeline skips GeoSVR training/rendering/TSDF extraction and continues with mesh simplification and Polycam alignment.
+If `third_party/GeoSVR/output/custom/<object_name>/mesh/tsdf/tsdf_fusion_post.ply` already exists, the pipeline skips GeoSVR training/rendering/TSDF extraction and continues with mesh simplification and Polycam alignment.
 
 Similarly, MPSfM is skipped when `data/<object_name>/keyframes_rot/sfm_outputs/` already contains a valid COLMAP reconstruction, either directly in `sfm_outputs/` or in a child directory such as `sfm_outputs/rec/`.
 
@@ -149,7 +150,7 @@ python run_photogrammetry_pipeline.py microwave --keep-mpsfm-cache
 # Re-run image/depth/camera rotation even if rotated outputs already exist.
 python run_photogrammetry_pipeline.py microwave --force-preprocess
 
-# Replace existing symlinks under mpsfm/data and GeoSVR/data/custom.
+# Replace existing symlinks under third_party/mpsfm/data and third_party/GeoSVR/data/custom.
 python run_photogrammetry_pipeline.py microwave --force-links
 
 # Visualize the final Polycam alignment after mesh transformation.
@@ -161,8 +162,8 @@ python run_photogrammetry_pipeline.py microwave --visualize-polycam-alignment
 Important options for `run_photogrammetry_pipeline.py`:
 
 ```text
---cfg-path                     GeoSVR config path. Relative paths are resolved from GeoSVR/.
---output-path                  GeoSVR output path. Defaults to GeoSVR/output/custom/<object>.
+--cfg-path                     GeoSVR config path. Relative paths are resolved from third_party/GeoSVR/.
+--output-path                  GeoSVR output path. Defaults to third_party/GeoSVR/output/custom/<object>.
 --mpsfm-conf                   MPSfM config name. Defaults to sp-lg_mogev2.
 --keep-mpsfm-cache             Keep data/<object>/keyframes_rot/cache_dir after MPSfM finishes.
 --simplification-target-reduction
@@ -178,7 +179,7 @@ Example with a custom output path:
 
 ```bash
 python run_photogrammetry_pipeline.py microwave \
-  --output-path GeoSVR/output/custom/microwave_test
+  --output-path third_party/GeoSVR/output/custom/microwave_test
 ```
 
 Example passing extra GeoSVR training arguments:
@@ -243,14 +244,14 @@ Reads MPSfM/COLMAP camera poses, raw Polycam camera poses, and `mesh_info.json`.
 
 Run commands from the repository root unless noted otherwise.
 
-The pipeline creates symlinks into `mpsfm/data/` and `GeoSVR/data/custom/`. If a symlink exists but points somewhere else, use `--force-links`.
+The pipeline creates symlinks into `third_party/mpsfm/data/` and `third_party/GeoSVR/data/custom/`. If a symlink exists but points somewhere else, use `--force-links`.
 
 If `corrected_images` and `corrected_cameras` exist in the raw Polycam export, they must both exist. The pipeline only switches to corrected data when both folders are present.
 
 The final aligned mesh is usually the mesh to use outside this pipeline:
 
 ```text
-GeoSVR/output/custom/<object_name>/mesh/tsdf/tsdf_fusion_post_simplified_polycam.ply
+third_party/GeoSVR/output/custom/<object_name>/mesh/tsdf/tsdf_fusion_post_simplified_polycam.ply
 ```
 
 ## Acknowledgments

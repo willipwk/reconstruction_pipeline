@@ -169,8 +169,8 @@ def run_pipeline(
     root = _repo_root()
     object_dir = root / "data" / object_name
     rotated_keyframes = object_dir / "keyframes_rot"
-    mpsfm_dir = root / "mpsfm"
-    geosvr_dir = root / "GeoSVR"
+    mpsfm_dir = root / "third_party" / "mpsfm"
+    geosvr_dir = root / "third_party" / "GeoSVR"
 
     if not object_dir.exists():
         raise FileNotFoundError(f"Polycam object folder not found: {object_dir}")
@@ -362,12 +362,12 @@ def main():
     parser.add_argument(
         "--cfg-path",
         default="cfg/mipnerf360_mesh.yaml",
-        help="GeoSVR config path. Relative paths are resolved from GeoSVR/.",
+        help="GeoSVR config path. Relative paths are resolved from third_party/GeoSVR/.",
     )
     parser.add_argument(
         "--output-path",
         default=None,
-        help="GeoSVR model output path. Defaults to GeoSVR/output/custom/{object}.",
+        help="GeoSVR model output path. Defaults to third_party/GeoSVR/output/custom/{object}.",
     )
     parser.add_argument("--mpsfm-conf", default="sp-lg_mogev2", help="MPSfM config name.")
     parser.add_argument("--force-preprocess", action="store_true", help="Reprocess existing rotated Polycam outputs.")
@@ -425,7 +425,7 @@ def main():
     args = parser.parse_args()
     output_path = args.output_path
     if output_path is None:
-        output_path = Path("GeoSVR") / "output" / "custom" / args.object
+        output_path = Path("third_party") / "GeoSVR" / "output" / "custom" / args.object
 
     results = run_pipeline(
         args.object,
