@@ -3,8 +3,8 @@
 This repository wraps a Polycam capture into a full reconstruction pipeline:
 
 1. Rotate Polycam keyframes into the orientation expected by the downstream tools.
-2. Run MPSfM to produce a COLMAP-compatible sparse reconstruction.
-3. Run GeoSVR to train, render, and extract a TSDF mesh.
+2. Run MPSfM or GlueMap to produce a COLMAP-compatible sparse reconstruction.
+3. Run GeoSVR or PGSR to train, render, and extract a TSDF mesh.
 4. Simplify the mesh.
 5. Transform the final mesh and camera poses back into the original Polycam mesh coordinate system.
 
@@ -21,11 +21,12 @@ We recommend using conda to manage the environment.
 2. Install pytorch. The pipeline is tested on `torch==2.10.0+cu126`.
    ```bash
    pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu126
+   pip install hydra-core
    ```
 3. Install mpsfm environment.
    1. Whether you have sudo or not, I recommend to install cpp libraries using conda. Then add paths to these libraries to `CMAKE_PREFIX`
       ```bash
-      conda install -c conda-forge glog metis suitesparse eigen==3.4.0 boost-cpp flann cgal gmp mpfr qt freeimage glew
+      conda install -c conda-forge glog metis==5.1.0 suitesparse eigen==3.4.0 boost-cpp flann cgal gmp mpfr qt freeimage glew
       export CMAKE_PREFIX_PATH="$CONDA_PREFIX:$CMAKE_PREFIX_PATH"
       export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
       ```
@@ -82,6 +83,7 @@ We recommend using conda to manage the environment.
          -DGflags_DIR="$CONDA_PREFIX/lib/cmake/gflags"
       ninja
       ninja install
+      cd ..
 
       export CMAKE_PREFIX_PATH=$HOME/local/colmap:$CMAKE_PREFIX_PATH
       python -m pip install .
@@ -96,11 +98,30 @@ We recommend using conda to manage the environment.
 4. Install GeoSVR environment.
     ```bash
     cd third_party/GeoSVR
-    pip install yacs natsort imageio imageio-ffmpeg scikit-image plyfile shapely trimesh open3d gpytoolbox transformers==4.49.0 lpips pytorch-msssim
+    pip install yacs natsort imageio imageio-ffmpeg scikit-image plyfile shapely trimesh open3d gpytoolbox transformers==4.49.0 lpips pytorch-msssim fast_simplification hydra-core
     pip install --no-build-isolation git+https://github.com/rahul-goel/fused-ssim.git@3006269823fc28110ba44686a172cbd59ec01bc3
     pip install --no-build-isolation ./cuda
     cd ../..
     ```
+5. Optional: install PGSR environment.
+    ```bash
+    cd third_party/pgsr
+    pip install --no-build-isolation "git+https://github.com/facebookresearch/pytorch3d.git@stable"
+    pip install --no-build-isolation submodules/diff-plane-rasterization
+    pip install --no-build-isolation submodules/simple-knn
+    cd ../..
+    ```
+    PGSR in this repository expects per-image monocular depth maps. The pipeline
+    generates those in-process with the Hugging Face Transformers Depth Anything V2
+    model, so no extra repository clone or local checkpoint path is needed.
+6. Optional: install GlueMap environment.
+    ```bash
+    cd third_party/gluemap
+    CMAKE_PREFIX_PATH=$CONDA_PREFIX pip install -e .
+    cd ../..
+    ```
+    The default GlueMap config expects checkpoints under `third_party/gluemap/checkpoints/`.
+    See `third_party/gluemap/INSTALL.md` for the exact download commands.
 Rightnow you should be able to run the code.
    
 
@@ -122,7 +143,7 @@ data/<object_name>/
 Then run:
 
 ```bash
-python run_photogrammetry_pipeline.py microwave
+python run_photogrammetry_pipeline.py object=microwave
 ```
 
 By default this writes GeoSVR outputs to:
@@ -131,63 +152,132 @@ By default this writes GeoSVR outputs to:
 third_party/GeoSVR/output/custom/<object_name>/
 ```
 
+To use PGSR instead of GeoSVR:
+
+```bash
+python run_photogrammetry_pipeline.py object=microwave renderer=pgsr
+```
+
+PGSR reuses the MPSfM sparse reconstruction directly, prepares data under
+`third_party/pgsr/data/custom/<object_name>/`, and writes outputs to
+`third_party/pgsr/output/custom/<object_name>/` by default.
+
+To use GlueMap instead of MPSfM for sparse reconstruction:
+
+```bash
+python run_photogrammetry_pipeline.py object=microwave sparse_reconstructor=gluemap
+```
+
+GlueMap writes sparse outputs under:
+
+```text
+data/<object_name>/keyframes_rot/gluemap_outputs/
+```
+
 If `third_party/GeoSVR/output/custom/<object_name>/mesh/tsdf/tsdf_fusion_post.ply` already exists, the pipeline skips GeoSVR training/rendering/TSDF extraction and continues with mesh simplification and Polycam alignment.
 
-Similarly, MPSfM is skipped when `data/<object_name>/keyframes_rot/sfm_outputs/` already contains a valid COLMAP reconstruction, either directly in `sfm_outputs/` or in a child directory such as `sfm_outputs/rec/`.
+Similarly, sparse reconstruction is skipped when the selected backend already has a valid COLMAP reconstruction. MPSfM checks `data/<object_name>/keyframes_rot/sfm_outputs/`; GlueMap checks `data/<object_name>/keyframes_rot/gluemap_outputs/`.
 
 Useful variants:
 
 ```bash
-# Stop after preprocessing, MPSfM, and GeoSVR data layout preparation.
-python run_photogrammetry_pipeline.py microwave --skip-geosvr
+# Stop after preprocessing, MPSfM, and renderer data layout preparation.
+python run_photogrammetry_pipeline.py object=microwave skip_reconstruction=true
 
 # Re-run MPSfM even if sparse reconstruction files already exist.
-python run_photogrammetry_pipeline.py microwave --force-sfm
+python run_photogrammetry_pipeline.py object=microwave force_sfm=true
+
+# Use GlueMap sparse reconstruction with PGSR dense reconstruction.
+python run_photogrammetry_pipeline.py object=microwave sparse_reconstructor=gluemap renderer=pgsr
 
 # Keep the MPSfM monocular-prior cache for debugging.
-python run_photogrammetry_pipeline.py microwave --keep-mpsfm-cache
+python run_photogrammetry_pipeline.py object=microwave cleanup_mpsfm_cache=false
 
 # Re-run image/depth/camera rotation even if rotated outputs already exist.
-python run_photogrammetry_pipeline.py microwave --force-preprocess
+python run_photogrammetry_pipeline.py object=microwave force_preprocess=true
 
-# Replace existing symlinks under third_party/mpsfm/data and third_party/GeoSVR/data/custom.
-python run_photogrammetry_pipeline.py microwave --force-links
+# Replace existing symlinks under third_party/mpsfm/data and renderer data folders.
+python run_photogrammetry_pipeline.py object=microwave force_links=true
 
 # Visualize the final Polycam alignment after mesh transformation.
-python run_photogrammetry_pipeline.py microwave --visualize-polycam-alignment
+python run_photogrammetry_pipeline.py object=microwave visualize_alignment=true
 ```
 
-## Command-Line Options
+## Configuration
 
-Important options for `run_photogrammetry_pipeline.py`:
+Pipeline defaults live in:
 
 ```text
---cfg-path                     GeoSVR config path. Relative paths are resolved from third_party/GeoSVR/.
---output-path                  GeoSVR output path. Defaults to third_party/GeoSVR/output/custom/<object>.
---mpsfm-conf                   MPSfM config name. Defaults to sp-lg_mogev2.
---keep-mpsfm-cache             Keep data/<object>/keyframes_rot/cache_dir after MPSfM finishes.
---simplification-target-reduction
-                               Fraction of mesh triangles to remove. Defaults to 0.5.
---visualize-polycam-alignment  Open an Open3D alignment view.
---polycam-mesh-path            Optional raw Polycam mesh overlay for visualization.
---camera-scale                 Camera frustum size for visualization.
---camera-stride                Draw every Nth camera in visualization.
---geosvr-arg                   Extra token appended to GeoSVR train.py. Repeat for multiple tokens.
+configs/pipeline.yaml
+configs/batch.yaml
+```
+
+Use Hydra overrides on the command line for one-off changes, or edit/copy the YAML files for repeated runs.
+
+Sparse reconstruction knobs:
+
+```text
+sparse_reconstructor     mpsfm or gluemap. Defaults to mpsfm.
+mpsfm_conf               MPSfM config name. Defaults to sp-lg_mogev2.
+mpsfm_command            Optional Python command list for MPSfM. Defaults to ["python"].
+gluemap_config           GlueMap config path. Relative paths resolve from third_party/gluemap/.
+gluemap_command          Optional command list. Defaults to gluemap-demo when found, otherwise ["python", "demo.py"].
+gluemap_intrinsics_mode  GlueMap intrinsics mode: SHARED, PER_FOLDER, or PER_CAMERA.
+gluemap_extra_args       Extra tokens appended to gluemap-demo.
+```
+
+MPSfM and GlueMap require incompatible `pycolmap` builds. Keep them in
+separate environments and select the backend command through Hydra:
+
+```bash
+python run_photogrammetry_pipeline.py \
+  object=microwave \
+  sparse_reconstructor=mpsfm \
+  mpsfm_command='["conda","run","-n","mpsfm","python"]'
+
+python run_photogrammetry_pipeline.py \
+  object=microwave \
+  sparse_reconstructor=gluemap \
+  gluemap_command='["conda","run","-n","gluemap","gluemap-demo"]'
+```
+
+The launcher automatically inserts `--no-capture-output` for `conda run`
+commands so GlueMap logs stream live. The first MapAnything run can still
+spend a long time downloading/loading `facebook/map-anything` and building
+CUDA/Torch caches before reconstruction starts.
+
+Using absolute interpreters also works:
+
+```bash
+mpsfm_command='["/path/to/mpsfm/env/bin/python"]'
+gluemap_command='["/path/to/gluemap/env/bin/gluemap-demo"]'
 ```
 
 Example with a custom output path:
 
 ```bash
-python run_photogrammetry_pipeline.py microwave \
-  --output-path third_party/GeoSVR/output/custom/microwave_test
+python run_photogrammetry_pipeline.py \
+  object=microwave \
+  output_path=third_party/GeoSVR/output/custom/microwave_test
 ```
 
 Example passing extra GeoSVR training arguments:
 
 ```bash
-python run_photogrammetry_pipeline.py microwave \
-  --geosvr-arg=--some_flag \
-  --geosvr-arg some_value
+python run_photogrammetry_pipeline.py \
+  object=microwave \
+  geosvr_extra_args='["--some_flag","some_value"]'
+```
+
+Example passing PGSR options:
+
+```bash
+python run_photogrammetry_pipeline.py \
+  object=microwave \
+  renderer=pgsr \
+  pgsr_max_depth=2.0 \
+  pgsr_voxel_size=0.005 \
+  pgsr_extra_args='["--iterations","20000","--max_abs_split_points","0","--opacity_cull_threshold","0.01"]'
 ```
 
 ## Batch Reconstruction
@@ -195,7 +285,7 @@ python run_photogrammetry_pipeline.py microwave \
 To reconstruct every object folder under `data/`, run:
 
 ```bash
-python run_all_photogrammetry_pipelines.py --gpus 0,1,2,3
+python run_all_photogrammetry_pipelines.py gpus='"0,1,2,3"'
 ```
 
 The launcher uses `ThreadPoolExecutor` and assigns one GPU to one object at a time by setting `CUDA_VISIBLE_DEVICES` for each subprocess. When `GPUtil` is available, it checks GPU load and memory before starting a job on a reserved GPU. Inside a Slurm allocation this GPUtil waiting is disabled by default because Slurm already controls the GPU allocation and GPUtil can report global load in a misleading way. It writes per-object logs under `logs/photogrammetry/`.
@@ -204,22 +294,24 @@ Useful variants:
 
 ```bash
 # Preview the schedule without running anything.
-python run_all_photogrammetry_pipelines.py --gpus 0,1 --dry-run
+python run_all_photogrammetry_pipelines.py gpus='"0,1"' dry_run=true
 
 # Process a subset of objects.
-python run_all_photogrammetry_pipelines.py --gpus 0,1 --objects microwave lamp
+python run_all_photogrammetry_pipelines.py gpus='"0,1"' objects='["microwave","lamp"]'
 
-# Forward arguments to run_photogrammetry_pipeline.py after '--'.
-python run_all_photogrammetry_pipelines.py --gpus 0,1 -- --skip-sfm
+# Forward Hydra overrides to run_photogrammetry_pipeline.py.
+python run_all_photogrammetry_pipelines.py \
+  gpus='"0,1"' \
+  pipeline_overrides='["skip_sfm=true","renderer=pgsr"]'
 
 # Wait for external GPU usage to drop before launching each job.
-python run_all_photogrammetry_pipelines.py --gpus 0,1 --max-gpu-load 0.5 --max-gpu-memory 0.5
+python run_all_photogrammetry_pipelines.py gpus='"0,1"' max_gpu_load=0.5 max_gpu_memory=0.5
 
 # Disable GPUtil checks and only use exclusive scheduler slots.
-python run_all_photogrammetry_pipelines.py --gpus 0,1 --no-gputil
+python run_all_photogrammetry_pipelines.py gpus='"0,1"' no_gputil=true
 
 # Force GPUtil load/memory checks even inside Slurm.
-python run_all_photogrammetry_pipelines.py --gpus 0,1 --force-gputil-check
+python run_all_photogrammetry_pipelines.py gpus='"0,1"' force_gputil_check=true
 ```
 
 ## Module Summary
@@ -230,7 +322,7 @@ Rotates images, depth maps, and camera intrinsics 90 degrees clockwise. It prefe
 
 `run_photogrammetry_pipeline.py`
 
-Coordinates preprocessing, symlink setup, MPSfM reconstruction, GeoSVR training/rendering/mesh extraction, mesh simplification, and Polycam coordinate alignment.
+Coordinates preprocessing, symlink setup, MPSfM/GlueMap sparse reconstruction, GeoSVR/PGSR training/rendering/mesh extraction, mesh simplification, and Polycam coordinate alignment.
 
 `mesh_simplification.py`
 
@@ -238,13 +330,13 @@ Simplifies a triangle mesh using `fast_simplification` and Open3D.
 
 `polycam_alignment.py`
 
-Reads MPSfM/COLMAP camera poses, raw Polycam camera poses, and `mesh_info.json`. It estimates a similarity transform from MPSfM coordinates into the Polycam mesh coordinate system, writes an aligned mesh, writes transformed camera poses, and can visualize the result in Open3D.
+Reads COLMAP camera poses from the selected sparse reconstructor, raw Polycam camera poses, and `mesh_info.json`. It estimates a similarity transform from sparse reconstruction coordinates into the Polycam mesh coordinate system, writes an aligned mesh, writes transformed camera poses, and can visualize the result in Open3D.
 
 ## Practical Notes
 
 Run commands from the repository root unless noted otherwise.
 
-The pipeline creates symlinks into `third_party/mpsfm/data/` and `third_party/GeoSVR/data/custom/`. If a symlink exists but points somewhere else, use `--force-links`.
+The pipeline creates symlinks into `third_party/mpsfm/data/` when using MPSfM and into the selected renderer data folder. For GeoSVR this is `third_party/GeoSVR/data/custom/`; for PGSR this is `third_party/pgsr/data/custom/`. If a symlink exists but points somewhere else, use `force_links=true`.
 
 If `corrected_images` and `corrected_cameras` exist in the raw Polycam export, they must both exist. The pipeline only switches to corrected data when both folders are present.
 
@@ -255,4 +347,4 @@ third_party/GeoSVR/output/custom/<object_name>/mesh/tsdf/tsdf_fusion_post_simpli
 ```
 
 ## Acknowledgments
-This project is built on [mpsfm](https://github.com/cvg/mpsfm) and [GeoSVR](https://github.com/Fictionarry/GeoSVR). We thank the authors of these two paper for open sourcing their amazing project. 
+This project is built on [mpsfm](https://github.com/cvg/mpsfm), [GeoSVR](https://github.com/Fictionarry/GeoSVR), [PGSR](https://github.com/zju3dv/PGSR), and [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2). We thank the authors for open sourcing their projects.

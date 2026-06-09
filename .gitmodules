@@ -5,3 +5,9 @@
 	path = third_party/mpsfm
 	url = git@github.com:willipwk/mpsfm.git
 	branch = zador/mogev2
+[submodule "third_party/gluemap"]
+	path = third_party/gluemap
+	url = https://github.com/colmap/gluemap.git
+[submodule "third_party/pgsr"]
+	path = third_party/pgsr
+	url = https://github.com/H-tr/pgsr.git

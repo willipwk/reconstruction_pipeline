@@ -1,4 +1,3 @@
-import argparse
 import os
 import queue
 import shlex
@@ -9,6 +8,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
+
+import hydra
+from omegaconf import DictConfig, OmegaConf
 
 try:
     import GPUtil
@@ -31,7 +33,7 @@ def _print(message):
 
 
 def _split_csv(value):
-    return [item.strip() for item in value.split(",") if item.strip()]
+    return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
 def _in_slurm_allocation():
@@ -94,7 +96,7 @@ def _detect_gpus(args):
 
 
 def _resolve_gpus(args):
-    if args.gpus:
+    if args.gpus is not None:
         gpus = _split_csv(args.gpus)
     elif args.num_gpus is not None:
         if args.num_gpus < 1:
@@ -139,12 +141,6 @@ def _select_objects(args):
     return objects
 
 
-def _strip_remainder_separator(args):
-    if args and args[0] == "--":
-        return args[1:]
-    return args
-
-
 def _format_duration(seconds):
     seconds = int(seconds)
     hours, seconds = divmod(seconds, 3600)
@@ -186,12 +182,12 @@ def _terminate_active_processes():
             process.wait()
 
 
-def _pipeline_command(args, object_name, pipeline_args):
+def _pipeline_command(args, object_name, pipeline_overrides):
     root = _repo_root()
     pipeline_script = Path(args.pipeline_script)
     if not pipeline_script.is_absolute():
         pipeline_script = root / pipeline_script
-    return [sys.executable, str(pipeline_script), object_name, *pipeline_args]
+    return [sys.executable, str(pipeline_script), f"object={object_name}", *pipeline_overrides]
 
 
 def _get_gputil_gpu(gpu_id):
@@ -240,7 +236,7 @@ def _wait_until_gpu_available(gpu_id, args, stop_event):
         time.sleep(args.gpu_wait_interval)
 
 
-def _run_object(object_name, gpu_queue, args, pipeline_args, log_dir, stop_event):
+def _run_object(object_name, gpu_queue, args, pipeline_overrides, log_dir, stop_event):
     if stop_event.is_set():
         return {
             "object": object_name,
@@ -275,7 +271,7 @@ def _run_object(object_name, gpu_queue, args, pipeline_args, log_dir, stop_event
             }
 
         root = _repo_root()
-        command = _pipeline_command(args, object_name, pipeline_args)
+        command = _pipeline_command(args, object_name, pipeline_overrides)
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(gpu)
 
@@ -329,7 +325,7 @@ def _run_object(object_name, gpu_queue, args, pipeline_args, log_dir, stop_event
 def run_batch(args):
     gpus = _resolve_gpus(args)
     objects = _select_objects(args)
-    pipeline_args = _strip_remainder_separator(args.pipeline_args)
+    pipeline_overrides = list(OmegaConf.to_container(args.pipeline_overrides, resolve=True) or [])
 
     log_dir = Path(args.log_dir)
     if not log_dir.is_absolute():
@@ -345,14 +341,14 @@ def run_batch(args):
         _print("GPUtil load/memory waiting is disabled under Slurm; use --force-gputil-check to enable it.")
     if GPUtil is None and not args.no_gputil:
         _print("GPUtil is not installed; using exclusive GPU slots without load/memory availability checks.")
-    if pipeline_args:
-        _print(f"Pipeline args: {shlex.join(pipeline_args)}")
+    if pipeline_overrides:
+        _print(f"Pipeline overrides: {shlex.join(pipeline_overrides)}")
     _print(f"Log directory: {log_dir}")
 
     if args.dry_run:
         for idx, object_name in enumerate(objects):
             gpu = gpus[idx % len(gpus)]
-            command = _pipeline_command(args, object_name, pipeline_args)
+            command = _pipeline_command(args, object_name, pipeline_overrides)
             _print(f"[dry-run] gpu={gpu} CUDA_VISIBLE_DEVICES={gpu} {shlex.join(command)}")
         return 0
 
@@ -366,7 +362,7 @@ def run_batch(args):
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_object = {
-            executor.submit(_run_object, object_name, gpu_queue, args, pipeline_args, log_dir, stop_event): object_name
+            executor.submit(_run_object, object_name, gpu_queue, args, pipeline_overrides, log_dir, stop_event): object_name
             for object_name in objects
         }
 
@@ -398,104 +394,9 @@ def run_batch(args):
     return 1 if failed else 0
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description=(
-            "Run run_photogrammetry_pipeline.py on multiple data/<object> folders, "
-            "assigning one GPU to one object at a time."
-        )
-    )
-    parser.add_argument(
-        "--data-dir",
-        default="data",
-        help="Directory containing object folders. Defaults to data/.",
-    )
-    parser.add_argument(
-        "--objects",
-        nargs="+",
-        help="Specific object names to process. Defaults to every data/* folder containing keyframes/.",
-    )
-    parser.add_argument(
-        "--exclude",
-        nargs="+",
-        help="Object names to skip when auto-discovering or using --objects.",
-    )
-    parser.add_argument(
-        "--gpus",
-        help="Comma-separated GPU IDs to use, for example 0,1,2,3.",
-    )
-    parser.add_argument(
-        "--num-gpus",
-        type=int,
-        help="Use GPU IDs 0..N-1. Ignored when --gpus is provided.",
-    )
-    parser.add_argument(
-        "--max-gpu-load",
-        type=float,
-        default=0.95,
-        help="Maximum GPUtil load allowed before starting a job on a GPU.",
-    )
-    parser.add_argument(
-        "--max-gpu-memory",
-        type=float,
-        default=0.95,
-        help="Maximum GPUtil memory utilization allowed before starting a job on a GPU.",
-    )
-    parser.add_argument(
-        "--gpu-wait-interval",
-        type=float,
-        default=10.0,
-        help="Seconds between GPUtil availability checks for a reserved GPU.",
-    )
-    parser.add_argument(
-        "--status-interval",
-        type=float,
-        default=60.0,
-        help="Minimum seconds between repeated waiting status messages.",
-    )
-    parser.add_argument(
-        "--no-gputil",
-        action="store_true",
-        help="Disable GPUtil load/memory checks and use only exclusive GPU slots.",
-    )
-    parser.add_argument(
-        "--force-gputil-check",
-        action="store_true",
-        help="Use GPUtil load/memory waiting even inside a Slurm allocation.",
-    )
-    parser.add_argument(
-        "--require-gputil",
-        action="store_true",
-        help="Fail if GPUtil is unavailable or cannot report a selected GPU.",
-    )
-    parser.add_argument(
-        "--pipeline-script",
-        default="run_photogrammetry_pipeline.py",
-        help="Pipeline script path. Relative paths are resolved from the repository root.",
-    )
-    parser.add_argument(
-        "--log-dir",
-        default="logs/photogrammetry",
-        help="Directory for per-object logs.",
-    )
-    parser.add_argument(
-        "--stop-on-failure",
-        action="store_true",
-        help="Do not start new objects after the first failure. Already-running jobs are allowed to finish.",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print scheduled commands without running them.",
-    )
-    parser.add_argument(
-        "pipeline_args",
-        nargs=argparse.REMAINDER,
-        help="Arguments after '--' are forwarded to run_photogrammetry_pipeline.py.",
-    )
-
-    args = parser.parse_args()
-    raise SystemExit(run_batch(args))
+@hydra.main(version_base=None, config_path="configs", config_name="batch")
+def main(cfg: DictConfig):
+    raise SystemExit(run_batch(cfg))
 
 
 if __name__ == "__main__":
