@@ -1,0 +1,27 @@
+data_dir: data
+objects: null
+exclude: null
+
+gpus: null
+num_gpus: null
+max_gpu_load: 0.95
+max_gpu_memory: 0.95
+gpu_wait_interval: 10.0
+status_interval: 60.0
+no_gputil: false
+force_gputil_check: false
+require_gputil: false
+
+pipeline_script: run_photogrammetry_pipeline.py
+pipeline_overrides: []
+
+log_dir: logs/photogrammetry
+stop_on_failure: false
+dry_run: false
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: .
+  output_subdir: null

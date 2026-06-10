@@ -1,0 +1,52 @@
+object: null
+sparse_reconstructor: mpsfm
+renderer: geosvr
+cfg_path: cfg/mipnerf360_mesh.yaml
+output_path: null
+mpsfm_conf: sp-lg_mogev2
+mpsfm_command: null
+gluemap_config: configs/example.yaml
+gluemap_command: null
+gluemap_intrinsics_mode: SHARED
+gluemap_extra_args: []
+
+force_preprocess: false
+force_sfm: false
+force_links: false
+force_depth: false
+cleanup_mpsfm_cache: true
+
+skip_preprocess: false
+skip_sfm: false
+skip_reconstruction: false
+skip_geosvr: false
+skip_depth_estimation: false
+
+simplify_mesh: true
+simplification_target_reduction: 0.5
+transform_to_polycam: true
+visualize_alignment: false
+polycam_mesh_path: null
+camera_scale: 0.05
+camera_stride: 1
+
+geosvr_extra_args: []
+
+pgsr_extra_args:
+  - --max_abs_split_points
+  - "0"
+  - --opacity_cull_threshold
+  - "0.005"
+pgsr_render_extra_args: []
+pgsr_max_depth: 2.0
+pgsr_voxel_size: 0.005
+pgsr_num_cluster: 1
+pgsr_use_depth_filter: false
+depth_anything_encoder: vitl
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: .
+  output_subdir: null
